@@ -2,18 +2,20 @@ import argparse
 import os
 import joblib
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 
 from differential_privacy import apply_laplace_noise
 
 
-def mia_objective(candidate: np.ndarray, model, target_prob: float) -> float:
-    prob = model.predict_proba(candidate.reshape(1, -1))[:, 1][0]
+def mia_objective(candidate, model, target_prob, feature_names):
+    df = pd.DataFrame([candidate], columns=feature_names)
+    prob = model.predict_proba(df)[:, 1][0]
     return (prob - target_prob) ** 2
 
 
-def run_inversion_attack(model, target_features, target_prob, n_restarts=5, bounds=None):
+def run_inversion_attack(model, target_features, target_prob, feature_names, n_restarts=5, bounds=None):
     best_result = None
     best_loss = float("inf")
     n_features = len(target_features)
@@ -21,7 +23,8 @@ def run_inversion_attack(model, target_features, target_prob, n_restarts=5, boun
     for _ in range(n_restarts):
         x0 = np.random.uniform(0, 1, size=n_features)
         result = minimize(
-            mia_objective, x0, args=(model, target_prob),
+            mia_objective, x0,
+            args=(model, target_prob, feature_names),
             method="L-BFGS-B", bounds=bounds,
             options={"maxiter": 500, "ftol": 1e-9},
         )
@@ -53,14 +56,14 @@ def evaluate(models_dir: str, epsilon: float, results_dir: str):
     print("  Model Inversion Attack — Security Analysis")
     print("=" * 55)
 
-    raw_prob = model.predict_proba(target.reshape(1, -1))[:, 1][0]
-    recon_unprotected = run_inversion_attack(model, target, raw_prob, bounds=bounds)
+    raw_prob = model.predict_proba(X_test.iloc[[target_idx]])[:, 1][0]
+    recon_unprotected = run_inversion_attack(model, target, raw_prob, feature_names, bounds=bounds)
     rmse_unprotected = compute_rmse(target, recon_unprotected)
 
     print(f"\n[Unprotected] RMSE: {rmse_unprotected:.4f}")
 
     protected_prob = apply_laplace_noise(raw_prob, epsilon=epsilon)
-    recon_protected = run_inversion_attack(model, target, protected_prob, bounds=bounds)
+    recon_protected = run_inversion_attack(model, target, protected_prob, feature_names, bounds=bounds)
     rmse_protected = compute_rmse(target, recon_protected)
 
     print(f"[Protected ε={epsilon}] RMSE: {rmse_protected:.4f}")
